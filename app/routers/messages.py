@@ -11,9 +11,16 @@ def assert_room_exists(room_id: str):
     if not db.reference(f"rooms/{room_id}").get():
         raise HTTPException(status_code=404, detail="Room not found")
 
+import time, uuid
+from fastapi import APIRouter, Depends
+# from wherever you defined it:
+from app.ws.manager import ws_manager_broadcast
+
+router = APIRouter()
+
 @router.post("/{room_id}/messages", response_model=MessageOut)
-def send_message(room_id: str, payload: SendMessage, user=Depends(get_current_user)):
-    assert_room_exists(room_id)
+async def send_message(room_id: str, payload: SendMessage, user=Depends(get_current_user)):
+    # 1) persist the message (your existing DB code)
     now_ms = int(time.time() * 1000)
     message_id = uuid.uuid4().hex
     data = {
@@ -23,8 +30,20 @@ def send_message(room_id: str, payload: SendMessage, user=Depends(get_current_us
         "read_by": {user["uid"]: True},
     }
     db.reference(f"rooms/{room_id}/messages/{message_id}").set(data)
-    ws_manager_broadcast(room_id, {"type": "message", "message": {"message_id": message_id, **data}})
+
+    # 2) IMPORTANT: await the broadcast (this runs on the server loop)
+    await ws_manager_broadcast(room_id, {
+        "type": "message",
+        "message_id": message_id,
+        **data
+    })
+
+    # 3) return response
     return {"message_id": message_id, **data}
+
+# typing function
+
+
 
 @router.get("/{room_id}/messages", response_model=list[MessageOut])
 def list_messages(
